@@ -86,7 +86,9 @@
 
   <!-- ================= TOP CONTACT BAR ================= -->
   <div class="bg-[#F97316] text-white text-[11px] sm:text-[12px] font-medium py-1.5 px-4 text-center tracking-wide flex items-center justify-center gap-3">
-    <span class="flex items-center gap-1"><i data-lucide="phone" class="w-3 h-3"></i> 01758553708</span>
+    <a href="tel:01758553708" onclick="trackContact('phone_top_bar')" class="flex items-center gap-1 hover:underline">
+      <i data-lucide="phone" class="w-3 h-3"></i> 01758553708
+    </a>
     <span class="opacity-60">|</span>
     <span class="hidden sm:inline-flex items-center gap-1"><i data-lucide="mail" class="w-3 h-3"></i> muskiistore@gmail.com</span>
     <span class="hidden sm:inline opacity-60">|</span>
@@ -147,7 +149,7 @@
               <i data-lucide="shopping-bag" class="w-4 h-4"></i>
               <span>অর্ডার করতে ক্লিক করুন</span>
             </a>
-            <a href="tel:01758553708" class="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-white border border-slate-200 text-xs sm:text-sm font-bold text-slate-700 hover:bg-slate-50 transition shadow-xs">
+            <a href="tel:01758553708" onclick="trackContact('phone_hero_button')" class="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-white border border-slate-200 text-xs sm:text-sm font-bold text-slate-700 hover:bg-slate-50 transition shadow-xs">
               <i data-lucide="phone" class="w-4 h-4 text-[#F97316]"></i>
               <span>01758553708</span>
             </a>
@@ -518,12 +520,28 @@
     let quantity = 1;
     let checkoutInitiated = false;
 
-    // ১. পেজ লোড হলে view_item পুশ
+    // হেল্পার: ইউনিক ইভেন্ট আইডি তৈরি (Browser ও Server Deduplication নিশ্চিত করার জন্য)
+    function generateEventId(prefix = 'evt') {
+      return `${prefix}_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+    }
+
+    // হেল্পার: ফার্স্ট পার্টি কুকি রিট্রিভ (_fbp, _fbc)
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+      return null;
+    }
+
+    // ১. পেজ লোড হলে view_item ও ViewContent পুশ (ডিডুপ্লিকেশন আইডিসহ)
     function trackViewItem() {
+      const viewEventId = generateEventId('view');
+
       window.dataLayer = window.dataLayer || [];
       window.dataLayer.push({ ecommerce: null });
       window.dataLayer.push({
         event: 'view_item',
+        event_id: viewEventId,
         ecommerce: {
           currency: 'BDT',
           value: UNIT_PRICE,
@@ -544,21 +562,23 @@
           content_type: 'product',
           value: UNIT_PRICE,
           currency: 'BDT'
-        });
+        }, { eventID: viewEventId });
       }
     }
 
-    // ২. চেকআউট শুরু করলে begin_checkout পুশ (এক সেশনে একবার)
+    // ২. চেকআউট শুরু করলে begin_checkout ও InitiateCheckout পুশ
     function trackCheckoutInitiation() {
       if (checkoutInitiated) return;
       checkoutInitiated = true;
 
+      const initEventId = generateEventId('ic');
       const subtotal = quantity * UNIT_PRICE;
 
       window.dataLayer = window.dataLayer || [];
       window.dataLayer.push({ ecommerce: null });
       window.dataLayer.push({
         event: 'begin_checkout',
+        event_id: initEventId,
         ecommerce: {
           currency: 'BDT',
           value: subtotal,
@@ -580,7 +600,26 @@
           value: subtotal,
           currency: 'BDT',
           num_items: quantity
-        });
+        }, { eventID: initEventId });
+      }
+    }
+
+    // ৩. কল ও যোগাযোগ ট্র্যাকিং (Micro Conversion)
+    function trackContact(contactChannel) {
+      const contactEventId = generateEventId('contact');
+
+      window.dataLayer = window.dataLayer || [];
+      window.dataLayer.push({
+        event: 'contact_click',
+        event_id: contactEventId,
+        contact_channel: contactChannel
+      });
+
+      if (typeof fbq === 'function') {
+        fbq('track', 'Contact', {
+          content_name: 'Phone Call Support',
+          channel: contactChannel
+        }, { eventID: contactEventId });
       }
     }
 
@@ -610,26 +649,33 @@
       const name = document.getElementById('c-name').value.trim();
       const phone = document.getElementById('c-phone').value.trim();
       const address = document.getElementById('c-address').value.trim();
-      const deliveryZone = document.querySelector('input[name="delivery_zone"]:checked').value;
-      const deliveryFee = getDeliveryCost();
-      const totalAmount = (quantity * UNIT_PRICE) + deliveryFee;
+
+      const selectedRadio = document.querySelector('input[name="delivery_zone"]:checked');
+      const isInside = selectedRadio ? (selectedRadio.value === 'inside') : true;
+      const deliveryFee = isInside ? 60 : 120;
+      const zoneText = isInside ? 'Inside Dhaka (৳60)' : 'Outside Dhaka (৳120)';
+
+      const subtotal = quantity * UNIT_PRICE;
+      const totalAmount = subtotal + deliveryFee;
       const orderId = 'ORD-' + Math.floor(100000 + Math.random() * 900000);
+      const purchaseEventId = generateEventId('pur');
 
       const btnSubmit = document.getElementById('btn-submit');
       btnSubmit.disabled = true;
       btnSubmit.innerHTML = '<span>অর্ডার প্রক্রিয়াধীন হচ্ছে...</span>';
 
-      // বাংলাদেশি ফোন নম্বর ফরম্যাট ঠিক করা (8801...)
+      // আন্তর্জাতিক ফরম্যাটে ফোন নম্বর (8801...)
       let rawPhone = phone.replace(/[^0-9]/g, '');
       if (rawPhone.startsWith('01')) {
         rawPhone = '88' + rawPhone;
       }
 
-      // ৩. পারচেজ ডেটা লেয়ার পুশ (CAPI এবং GA4 এর জন্য)
+      // ৪. পারচেজ ডেটা লেয়ার পুশ (GTM Server-side CAPI এবং GA4 এর জন্য)
       window.dataLayer = window.dataLayer || [];
       window.dataLayer.push({ ecommerce: null });
       window.dataLayer.push({
         event: 'purchase',
+        event_id: purchaseEventId,
         ecommerce: {
           transaction_id: orderId,
           value: totalAmount,
@@ -647,13 +693,15 @@
           phone_number: rawPhone,
           first_name: name.toLowerCase(),
           address: {
-            city: deliveryZone === 'inside' ? 'dhaka' : 'outside dhaka',
+            city: isInside ? 'dhaka' : 'outside dhaka',
             country: 'bd'
           }
-        }
+        },
+        fbp: getCookie('_fbp'),
+        fbc: getCookie('_fbc')
       });
 
-      // মেটা পিক্সেল ব্রাউজার ফলব্যাক
+      // মেটা পিক্সেল ব্রাউজার ফলব্যাক (হুবহু একই eventID দিয়ে deduplication নিশ্চিত)
       if (typeof fbq === 'function') {
         fbq('track', 'Purchase', {
           content_ids: [PRODUCT_ID],
@@ -662,19 +710,21 @@
           value: totalAmount,
           currency: 'BDT',
           num_items: quantity
-        });
+        }, { eventID: purchaseEventId });
       }
 
       // গুগল শিট ও টেলিগ্রাম ব্যাকএন্ড পে-লোড
       const payload = {
-        orderId,
-        name,
-        phone,
-        address,
-        quantity,
-        zone: deliveryZone === 'inside' ? 'Inside Dhaka (৳60)' : 'Outside Dhaka (৳120)',
-        deliveryFee,
+        orderId: orderId,
+        name: name,
+        phone: phone,
+        address: address,
+        quantity: quantity,
+        zone: zoneText,
+        deliveryZone: zoneText,
+        deliveryFee: deliveryFee,
         total: `৳${totalAmount.toLocaleString('en-US')}`,
+        totalAmount: totalAmount,
         createdAt: new Date().toISOString()
       };
 
@@ -689,7 +739,7 @@
         document.getElementById('order-badge').textContent = orderId;
         document.getElementById('thankyou-msg').textContent = `ধন্যবাদ ${name}, আপনার অর্ডারটি সফলভাবে গ্রহণ করা হয়েছে!`;
         document.getElementById('conf-qty').textContent = quantity;
-        document.getElementById('conf-zone').textContent = deliveryZone === 'inside' ? 'ঢাকার ভিতরে' : 'ঢাকার বাইরে';
+        document.getElementById('conf-zone').textContent = isInside ? 'ঢাকার ভিতরে' : 'ঢাকার বাইরে';
         document.getElementById('conf-total').textContent = `৳${totalAmount.toLocaleString('bn-BD')}`;
 
         document.getElementById('state-landing').classList.remove('active');
@@ -700,7 +750,7 @@
         alert('অর্ডার সাবমিট করতে সমস্যা হয়েছে। সরাসরি কল দিয়ে অর্ডার সম্পন্ন করুন।');
       } finally {
         btnSubmit.disabled = false;
-        btnSubmit.innerHTML = `<span>অর্ডার কনফার্ম করুন (৳<span id="btn-total">${((quantity * UNIT_PRICE) + getDeliveryCost()).toLocaleString('bn-BD')}</span>)</span>`;
+        btnSubmit.innerHTML = `<span>অর্ডার কনফার্ম করুন (৳<span id="btn-total">${totalAmount.toLocaleString('bn-BD')}</span>)</span>`;
       }
     }
 
@@ -714,6 +764,26 @@
       document.getElementById('state-landing').classList.add('active');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
+
+    // ৫. স্ক্রোল ডেপথ ট্র্যাকিং (৫০% এবং ৯০%)
+    let scroll50 = false;
+    let scroll90 = false;
+    window.addEventListener('scroll', () => {
+      const scrollPos = window.scrollY + window.innerHeight;
+      const totalDocHeight = document.documentElement.scrollHeight;
+      const scrollPercent = (scrollPos / totalDocHeight) * 100;
+
+      if (scrollPercent >= 50 && !scroll50) {
+        scroll50 = true;
+        window.dataLayer = window.dataLayer || [];
+        window.dataLayer.push({ event: 'scroll_50' });
+      }
+      if (scrollPercent >= 90 && !scroll90) {
+        scroll90 = true;
+        window.dataLayer = window.dataLayer || [];
+        window.dataLayer.push({ event: 'scroll_90' });
+      }
+    }, { passive: true });
 
     document.addEventListener('DOMContentLoaded', () => {
       lucide.createIcons();
